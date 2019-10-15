@@ -124,7 +124,10 @@ def compute_stats(map_vals, col_vals, func ):
     verb2("Computing stats")
     stat_vals = {}
 
-    unique_pixel_vals = np.unique( map_vals)
+    # Ignore any NaN or Inf values
+    mm = map_vals[np.isfinite(map_vals)]
+
+    unique_pixel_vals = np.unique(mm)
     verb3("Number of unique map values in event file: {}".format(len(unique_pixel_vals)))
 
     for mm in unique_pixel_vals:
