@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 #
-# Copyright (C) 2019 Smithsonian Astrophysical Observatory
+# Copyright (C) 2019, 2021 Smithsonian Astrophysical Observatory
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -17,8 +17,7 @@
 # 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 #
 
-toolname = "statmap"
-__revision__ = "18 January 2019"
+"Create a map of a certain static of a certain column"
 
 
 import sys
@@ -28,6 +27,8 @@ import numpy as np
 from pycrates import read_file
 
 import ciao_contrib.logger_wrapper as lw
+toolname = "statmap"
+__revision__ = "28 October 2021"
 lw.initialize_logger(toolname)
 lgr = lw.get_logger(toolname)
 verb0 = lgr.verbose0
@@ -39,35 +40,36 @@ verb5 = lgr.verbose5
 
 
 class CIAONamedTemporaryFile():
-    "CIAO named temp file, uses ASCDS_WORK_PATH and del when done."    
-    
+    "CIAO named temp file, uses ASCDS_WORK_PATH and del when done."
+
     _tmpdir = os.environ["ASCDS_WORK_PATH"]
-    
+
     def __init__(self):
         from tempfile import NamedTemporaryFile
-        retval = NamedTemporaryFile( dir=self._tmpdir,delete=False )
+        retval = NamedTemporaryFile(dir=self._tmpdir, delete=False)
         self.__tmp = retval
 
     @property
     def name(self):
+        'Get file name'
         return self.__tmp.name
-    
+
     def __del__(self):
         self.__tmp.close()
-        if os.path.exists( self.__tmp.name ):
-            os.unlink( self.__tmp.name)
+        if os.path.exists(self.__tmp.name):
+            os.unlink(self.__tmp.name)
 
 
 def map_stat_function(stat):
     "convert stat name to a statistical function"
 
-    do_stat = { 'median' : np.median,
-                'max'    : np.max, 
-                'min'    : np.min,
-                'mean'   : np.mean,
-                'count'  : len,
-                'sum'    : np.sum
-                }
+    do_stat = {'median': np.median,
+               'max': np.max,
+               'min': np.min,
+               'mean': np.mean,
+               'count': len,
+               'sum': np.sum
+               }
     assert stat in do_stat, "Unknown statistic"
     return do_stat[stat]
 
@@ -75,7 +77,7 @@ def map_stat_function(stat):
 def load_mapfile(mapfile):
     "Read map"
 
-    verb2("Reading mapfile '{}'".format(mapfile))
+    verb2(f"Reading mapfile '{mapfile}'")
     pixelmap = read_file(mapfile)
     mapimg = pixelmap.get_image().values.copy()
     return mapimg
@@ -85,13 +87,13 @@ def assign_mapid_to_events(evtfile, mapfile, column):
     "Lookup event locations in map"
 
     from ciao_contrib.runtool import make_tool
-    
+
     verb2("Mapping events")
 
     tmpevt = CIAONamedTemporaryFile()
 
     pick = make_tool("dmimgpick")
-    pick.infile = evtfile+"[cols x,y,{}]".format(column) # fewer cols = faster
+    pick.infile = evtfile+f"[cols x,y,{column}]"   # fewer cols = faster
     pick.imgfile = mapfile
     pick.outfile = tmpevt.name
     pick.method = "closest"
@@ -100,104 +102,108 @@ def assign_mapid_to_events(evtfile, mapfile, column):
     return tmpevt
 
 
-def load_event_file( infile, column ):
+def load_event_file(infile, column):
     "Load event file w/ map IDs"
 
-    def find_map_column_name( evtfile, column ):
+    def find_map_column_name(evtfile, column):
         "find map column name by process of elimination"
         cols = evtfile.get_colnames(vectors=False)
-        map_col = [x for x in cols if x.lower() not in ['x','y',column]]
-        assert len(map_col)==1, "Somehow extra columns are present"
-        return(map_col[0])
+        map_col = [x for x in cols if x.lower() not in ['x', 'y', column]]
+        assert len(map_col) == 1, "Somehow extra columns are present"
+        return map_col[0]
 
     verb2("Loading event file")
     evtfile = read_file(infile)
-    map_col = find_map_column_name(evtfile,column)
+    map_col = find_map_column_name(evtfile, column)
     map_vals = evtfile.get_column(map_col).values
     col_vals = evtfile.get_column(column).values
-    return map_vals,col_vals
+    return map_vals, col_vals
 
 
-def compute_stats(map_vals, col_vals, func ):
+def compute_stats(map_vals, col_vals, func):
     "Compute stats for each mapID"
 
     verb2("Computing stats")
     stat_vals = {}
 
     # Ignore any NaN or Inf values
-    mm = map_vals[np.isfinite(map_vals)]
+    good_map_vals = map_vals[np.isfinite(map_vals)]
 
-    unique_pixel_vals = np.unique(mm)
-    verb3("Number of unique map values in event file: {}".format(len(unique_pixel_vals)))
+    unique_pixel_vals = np.unique(good_map_vals)
+    npix = len(unique_pixel_vals)
+    verb3(f"Number of unique map values in event file: {npix}")
 
-    for mm in unique_pixel_vals:
-        idx = np.where(map_vals==mm)
+    for pixel_val in unique_pixel_vals:
+        idx = np.where(map_vals == pixel_val)
         vals = col_vals[idx[0]]
-        stat_vals[mm] = func(vals) if len(vals) > 0 else 0
+        stat_vals[pixel_val] = func(vals) if len(vals) > 0 else 0
     return stat_vals
 
 
-def replace_mapid_with_stats(stat_vals, mapimg ):
+def replace_mapid_with_stats(stat_vals, mapimg):
     "Replace map values with stat value, same as dmmaskfill"
 
     verb2("Paint by numbers")
     outvals = np.zeros_like(mapimg).astype(np.float)
-    
-    unique_pixel_vals = np.unique(mapimg)
-    verb3("Number of unique map values in mapfile: {}".format(len(unique_pixel_vals)))
 
-    for mm in unique_pixel_vals:
-        idx = np.where(mapimg == mm)
-        outvals[idx] = stat_vals[mm] if mm in stat_vals else np.nan
-    
+    unique_pixel_vals = np.unique(mapimg)
+    npix = len(unique_pixel_vals)
+    verb3(f"Number of unique map values in mapfile: {npix}")
+
+    for pixel_val in unique_pixel_vals:
+        idx = np.where(mapimg == pixel_val)
+        outvals[idx] = stat_vals[pixel_val] if pixel_val in stat_vals else np.nan
+
     return outvals
+
 
 def write_output(outvals, outfile, stat, column, clobber):
     "Write output"
 
-    verb2("Writing output file '{}'".format(outfile))
+    # TODO: copy header/wcs and set units same as column
+
+    verb2(f"Writing output file '{outfile}'")
     from crates_contrib.utils import make_image_crate
     outmap = make_image_crate(outvals)
-    outmap.name = "{}_{}".format(stat,column)
+    outmap.name = f"{stat}_{column}"
     outmap.write(outfile, clobber=clobber)
 
 
-def process_parameters( ):
+def process_parameters():
     "Read parameters and do some manipulation handling."
 
     from ciao_contrib.param_soaker import get_params
     from ciao_contrib._tools.fileio import outfile_clobber_checks
 
-    pars = get_params(toolname, "rw", sys.argv, 
-        verbose={"set":lw.set_verbosity, "cmd":verb1} )
-    
-    pars["clobber"] = ( pars["clobber"] == "yes")
-    outfile_clobber_checks( pars["clobber"], pars["outfile"] )
-    
-    return(pars)
+    pars = get_params(toolname, "rw", sys.argv,
+                      verbose={"set": lw.set_verbosity, "cmd": verb1})
+
+    pars["clobber"] = (pars["clobber"] == "yes")
+    outfile_clobber_checks(pars["clobber"], pars["outfile"])
+
+    return pars
 
 
-@lw.handle_ciao_errors( toolname, __revision__)
+@lw.handle_ciao_errors(toolname, __revision__)
 def main():
-    pars=process_parameters() 
- 
-    do_stat_func = map_stat_function(pars["statistic"]) 
+    "Main routine"
+
+    pars = process_parameters()
+
+    do_stat_func = map_stat_function(pars["statistic"])
     mapimg = load_mapfile(pars["mapfile"])
-    tmpevt = assign_mapid_to_events(pars["infile"], pars["mapfile"], pars["column"])
-    map_vals,col_vals = load_event_file(tmpevt.name, pars["column"])
-    stat_vals = compute_stats( map_vals, col_vals, do_stat_func)
-    outvals = replace_mapid_with_stats( stat_vals, mapimg)
-    write_output( outvals, pars["outfile"], pars["statistic"], pars["column"], pars["clobber"] )
+    tmpevt = assign_mapid_to_events(pars["infile"], pars["mapfile"],
+                                    pars["column"])
+    map_vals, col_vals = load_event_file(tmpevt.name, pars["column"])
+    stat_vals = compute_stats(map_vals, col_vals, do_stat_func)
+    outvals = replace_mapid_with_stats(stat_vals, mapimg)
+    write_output(outvals, pars["outfile"], pars["statistic"],
+                 pars["column"], pars["clobber"])
+
+    from ciao_contrib.runtool import add_tool_history
+    add_tool_history(pars["outfile"], toolname, pars,
+                     toolversion=__revision__)
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except Exception as E:
-        print ("\n# "+toolname+" ("+__revision__+"): ERROR "+str(E)+"\n", file=sys.stderr)
-        sys.exit(1)
-    sys.exit(0)
-  
-
-
-
+    main()
