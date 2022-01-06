@@ -13,7 +13,7 @@ os.environ["PYVER"] = "python{}.{}".format(ver[0],ver[1])
 from distutils.core import setup
 
 setup( name='statmap',
-       version='4.13.0',
+       version='4.14.0',
        description='Compute a map of statistics values',
        author='Kenny Glotfelty',
        author_email='glotfeltyk@si.edu',

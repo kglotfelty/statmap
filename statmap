@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 #
-# Copyright (C) 2019, 2021 Smithsonian Astrophysical Observatory
+# Copyright (C) 2019-2022 Smithsonian Astrophysical Observatory
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -28,7 +28,7 @@ from pycrates import read_file
 
 import ciao_contrib.logger_wrapper as lw
 toolname = "statmap"
-__revision__ = "28 October 2021"
+__revision__ = "06 January 2022"
 lw.initialize_logger(toolname)
 lgr = lw.get_logger(toolname)
 verb0 = lgr.verbose0
@@ -72,15 +72,6 @@ def map_stat_function(stat):
                }
     assert stat in do_stat, "Unknown statistic"
     return do_stat[stat]
-
-
-def load_mapfile(mapfile):
-    "Read map"
-
-    verb2(f"Reading mapfile '{mapfile}'")
-    pixelmap = read_file(mapfile)
-    mapimg = pixelmap.get_image().values.copy()
-    return mapimg
 
 
 def assign_mapid_to_events(evtfile, mapfile, column):
@@ -140,10 +131,13 @@ def compute_stats(map_vals, col_vals, func):
     return stat_vals
 
 
-def replace_mapid_with_stats(stat_vals, mapimg):
+def replace_mapid_with_stats(stat_vals, mapfile):
     "Replace map values with stat value, same as dmmaskfill"
 
     verb2("Paint by numbers")
+
+    verb2(f"Reading mapfile '{mapfile}'")
+    mapimg = read_file(mapfile).get_image().values.copy()
     outvals = np.zeros_like(mapimg).astype(np.float)
 
     unique_pixel_vals = np.unique(mapimg)
@@ -157,15 +151,13 @@ def replace_mapid_with_stats(stat_vals, mapimg):
     return outvals
 
 
-def write_output(outvals, outfile, stat, column, clobber):
+def write_output(outvals, mapfile, outfile, stat, column, clobber):
     "Write output"
 
-    # TODO: copy header/wcs and set units same as column
-
     verb2(f"Writing output file '{outfile}'")
-    from crates_contrib.utils import make_image_crate
-    outmap = make_image_crate(outvals)
+    outmap = read_file(mapfile)
     outmap.name = f"{stat}_{column}"
+    outmap.get_image().values = outvals
     outmap.write(outfile, clobber=clobber)
 
 
@@ -191,14 +183,15 @@ def main():
     pars = process_parameters()
 
     do_stat_func = map_stat_function(pars["statistic"])
-    mapimg = load_mapfile(pars["mapfile"])
     tmpevt = assign_mapid_to_events(pars["infile"], pars["mapfile"],
                                     pars["column"])
     map_vals, col_vals = load_event_file(tmpevt.name, pars["column"])
     stat_vals = compute_stats(map_vals, col_vals, do_stat_func)
-    outvals = replace_mapid_with_stats(stat_vals, mapimg)
-    write_output(outvals, pars["outfile"], pars["statistic"],
-                 pars["column"], pars["clobber"])
+
+    outvals = replace_mapid_with_stats(stat_vals, pars["mapfile"])
+
+    write_output(outvals, pars["mapfile"], pars["outfile"],
+                 pars["statistic"], pars["column"], pars["clobber"])
 
     from ciao_contrib.runtool import add_tool_history
     add_tool_history(pars["outfile"], toolname, pars,
